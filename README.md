@@ -59,4 +59,4 @@ Hence no change is required if you plan to use the training script.
 
 Entire training script can be found in the `face-id` branch of the repository.
 https://github.com/jhjin/imagenet-multiGPU.torch/tree/face-id
-A large size of batch is preferred in order to let the trining converge to a higher score/accuracy.
+A large size of batch is preferred in order to let the training converge to a higher score/accuracy.
