@@ -7,14 +7,26 @@
 __global__ void triplet_dist_kernel(const int n, const float norm,
                                     const int nb_batch, const int length,
                                     float* x, float* y) {
+
+  // Unnecessary for loop...
+  // This is EXACTLY equivalent to `if (i < n)` statement
   for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < n; i += blockDim.x*gridDim.x) {
+
+    // Equivalent C for loop follows
+    // for (int i = 0, i < nb_batch^2, i++)
+
+    // (y, x) coordinate in dist / y
     int row = i / nb_batch;
     int col = i % nb_batch;
 
+    // Pointers to two rows of input / x
     float *xrow = x + row*length;
     float *xcol = x + col*length;
 
+    // Initialise scalar product summation
     float sum = 0.0f;
+
+    // Compute sum[(component difference) ^ norm]
     for (int j = 0; j < length; j++) {
       if (norm == 1.0f) {
         sum += fabsf(xrow[j] - xcol[j]);
@@ -22,6 +34,8 @@ __global__ void triplet_dist_kernel(const int n, const float norm,
         sum += powf(xrow[j] - xcol[j], norm);
       }
     }
+
+    // Compute norm-root of the sum
     if (norm == 1.0f) {
       y[row*nb_batch + col] = sum;
     } else {
