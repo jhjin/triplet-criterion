@@ -49,24 +49,32 @@ __global__ void triplet_loss_semi_kernel(const int n, const int nb_batch, const 
                                          const float* l, float* y, float* z) {
   for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < n; i += blockDim.x*gridDim.x) {
 
-    // find anchor embedding
+    // Equivalent C for loop follows
+    // for (int i = 0, i < nb_batch, i++)
+
+    // Index of anchor embedding
     int idx_a = i;
 
-    // find positive embedding
+    // Find positive embedding
+    // Start with itself: positive -> anchor
     int idx_p = i;
     float val_p = 0.0f;
+    // Look for worse (farther) positive
     for (int j = 0; j < nb_batch; j++) {
-      if ((l[j] == l[i]) & (val_p < d[i*nb_batch + j])) {
+      // The i-th row of `d` contains all the distances between the anchor
+      // (i-th embedding) and all other j embeddings, j = 0 -> nb_batch - 1
+      if ((l[j] == l[i]) && (val_p < d[i*nb_batch + j])) {
         idx_p = j;
         val_p = d[i*nb_batch + j];
       }
     }
 
-    // find negative embedding
+    // Find negative embedding
     int idx_n = i;
     float val_n = FLT_MAX;
+    // Look for the worse (closest) negative
     for (int j = 0; j < nb_batch; j++) {
-      if ((l[j] != l[i]) & (val_p < d[i*nb_batch + j]) & (val_n > d[i*nb_batch + j])) {
+      if ((l[j] != l[i]) && (val_p < d[i*nb_batch + j]) && (val_n > d[i*nb_batch + j])) {
         idx_n = j;
         val_n = d[i*nb_batch + j];
       }
@@ -83,7 +91,6 @@ __global__ void triplet_loss_semi_kernel(const int n, const int nb_batch, const 
       sum += powf(x[idx_a*length + j] - x[idx_p*length + j], 2);
     for (int j = 0; j < length; j++)
       sum -= powf(x[idx_a*length + j] - x[idx_n*length + j], 2);
-
     z[i] = fmaxf(sum + alpha, 0.0f);
   }
 }
