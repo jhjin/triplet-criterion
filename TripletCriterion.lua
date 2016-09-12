@@ -82,7 +82,7 @@ function TripletCriterion:updateOutput(input, target)
                   -- pick an element in distance matrix
                   local row = j*self.samples + k + 1
                   local col = j*self.samples + i + 1
-                  col = ((row > col) and col) or (col + 1)
+                  col = col < row and col or col + 1
 
                   -- find positive embedding
                   local ipos = col
@@ -92,9 +92,9 @@ function TripletCriterion:updateOutput(input, target)
                   local ineg = row
                   local vneg = math.huge
                   for l = self.samples*self.blocks+1, nb_batch do
-                     if (target[l] ~= target[row]) and
-                        (vpos < self.dist[row][l]) and
-                        (vneg > self.dist[row][l]) then
+                     if target[l] ~= target[row] and
+                        self.dist[row][l] > vpos and
+                        self.dist[row][l] < vneg then
                         ineg = l
                         vneg = self.dist[row][l]
                      end
