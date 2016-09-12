@@ -148,5 +148,9 @@ function TripletCriterion:updateGradInput(input, target)
       end
    end
 
+   local nb_backwards = math.max(1, self.samples-1)
+   local nb_batch = input:size(1)
+   self.gradInput = gradInput:view(nb_backwards, nb_batch, length):sum(1):squeeze()
+
    return self.gradInput
 end
