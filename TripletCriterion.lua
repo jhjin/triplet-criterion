@@ -26,7 +26,14 @@ function TripletCriterion:updateOutput(input, target)
    else
       local nb_batch = input:size(1)
       local length = input:size(2)
+      --------------------------------------------------------------------------
+      -- BUG allert
+      --------------------------------------------------------------------------
       local nb_blocks = math.floor(nb_batch/self.samples)
+      --------------------------------------------------------------------------
+      -- should be simply nb_batch = self.blocks
+      -- Otherwise we enter the trash area!
+      --------------------------------------------------------------------------
 
       -- calculate distance matrix
       self.dist:resize(nb_batch, nb_batch)
