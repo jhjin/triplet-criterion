@@ -65,14 +65,6 @@ function TripletCriterion:updateOutput(input, target)
    else
       local nb_batch = input:size(1)
       local length = input:size(2)
-      --------------------------------------------------------------------------
-      -- BUG allert
-      --------------------------------------------------------------------------
-      local nb_blocks = math.floor(nb_batch/self.samples)
-      --------------------------------------------------------------------------
-      -- should be simply nb_batch = self.blocks
-      -- Otherwise we enter the trash area!
-      --------------------------------------------------------------------------
 
       -- calculate distance matrix
       self.dist:resize(nb_batch, nb_batch)
@@ -118,11 +110,11 @@ function TripletCriterion:updateOutput(input, target)
       -- (ii) all anchor-positive pairs
       elseif self.samples > 1 then
          -- calculate nb of all pairs
-         self.embeddings:resize(nb_batch*(self.samples-1), 3):zero()
+         self.embeddings:resize(nb_batch*(self.samples-1), 3):fill(1)
 
          -- repeat batch (samples-1) times
          for i = 0, self.samples-2 do
-            for j = 0, nb_blocks-1 do
+            for j = 0, self.blocks-1 do
                for k = 0, self.samples-1 do
 
                   -- pick an element in distance matrix
