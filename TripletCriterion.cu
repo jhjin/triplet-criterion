@@ -1,4 +1,6 @@
 #include "common.h"
+#include <stdio.h>
+//#include "THCUNN.h"
 
 #define ANCHOR 0
 #define POSITIVE 1
@@ -100,6 +102,11 @@ __global__ void triplet_loss_semi_allpairs_kernel(const int n, const int nb_batc
                                                   const float alpha, const float* x, const float* d,
                                                   const float* l, float* y, float* z) {
   for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < n; i += blockDim.x*gridDim.x) {
+
+    // Equivalent C for loop follows
+    // for (int i = 0, i < nb_blocks*samples*(samples-1), i++)
+
+
     // pick each element from positive diagonal block in distance matrix
     int row = i % (nb_blocks*samples);
     int col = i / (nb_blocks*samples) + (row / samples)*samples;
@@ -139,18 +146,19 @@ __global__ void triplet_loss_semi_allpairs_kernel(const int n, const int nb_batc
   }
 }
 
-static int triplet_TripletCriterion_updateOutput(lua_State *L) {
-  THCState *state = getCutorchState(L);
-
-  THCudaTensor *input = (THCudaTensor*)luaT_checkudata(L, 2, "torch.CudaTensor");
-  THCudaTensor *label = (THCudaTensor*)luaT_checkudata(L, 3, "torch.CudaTensor");
-  float norm = luaT_getfieldchecknumber(L, 1, "norm");
-  float alpha = luaT_getfieldchecknumber(L, 1, "alpha");
-  int samples = luaT_getfieldchecknumber(L, 1, "samples");
-  int nb_blocks = luaT_getfieldchecknumber(L, 1, "blocks");
-  THCudaTensor *dist = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "dist", "torch.CudaTensor");
-  THCudaTensor *emb = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "embeddings", "torch.CudaTensor");
-  THCudaTensor *loss = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "loss", "torch.CudaTensor");
+extern "C"
+void updateOutput(
+  THCState* state,
+  THCudaTensor* input,
+  THCudaTensor* label,
+  float norm,
+  float alpha,
+  int samples,
+  int nb_blocks,
+  THCudaTensor* dist,
+  THCudaTensor* emb,
+  THCudaTensor* loss
+) {
 
   long nb_batch = input->size[0];
   long length   = input->size[1];
@@ -190,7 +198,7 @@ static int triplet_TripletCriterion_updateOutput(lua_State *L) {
       THCudaTensor_data(state, emb),
       THCudaTensor_data(state, loss)
     );
-  } else {
+  } else { // samples == 1
     num_threads = nb_batch;
     triplet_loss_semi_kernel <<<GET_BLOCKS(num_threads), CUDA_NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
       num_threads, nb_batch, length, alpha,
@@ -204,7 +212,7 @@ static int triplet_TripletCriterion_updateOutput(lua_State *L) {
 
   // close
   THCudaTensor_free(state, input);
-  return 1;
+  return;
 }
 
 __global__ void triplet_prop_kernel(const int n, const int nb_pairs, const int length,
@@ -221,17 +229,18 @@ __global__ void triplet_prop_kernel(const int n, const int nb_pairs, const int l
   }
 }
 
-static int triplet_TripletCriterion_updateGradInput(lua_State *L) {
-  THCState *state = getCutorchState(L);
-
-  THCudaTensor *input = (THCudaTensor*)luaT_checkudata(L, 2, "torch.CudaTensor");
-  THCudaTensor *emb = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "embeddings", "torch.CudaTensor");
-  THCudaTensor *loss = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "loss", "torch.CudaTensor");
-  THCudaTensor *gradInput = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
+extern "C"
+void updateGradInput(
+  THCState* state,
+  THCudaTensor* input,
+  THCudaTensor* emb,
+  THCudaTensor* loss,
+  THCudaTensor* gradInput
+) {
   long nb_pairs = loss->size[0];
   long length   = input->size[1];
 
-  THCudaTensor_resize2d(state, gradInput, nb_pairs, length);
+  //THCudaTensor_resize2d(state, gradInput, nb_pairs, length);
 
   // queue kernel
   long num_threads = nb_pairs*length;
@@ -243,18 +252,5 @@ static int triplet_TripletCriterion_updateGradInput(lua_State *L) {
     THCudaTensor_data(state, gradInput)
   );
 
-  return 1;
-}
-
-static const struct luaL_Reg triplet_TripletCriterion__ [] = {
-  {"TripletCriterion_updateOutput", triplet_TripletCriterion_updateOutput},
-  {"TripletCriterion_updateGradInput", triplet_TripletCriterion_updateGradInput},
-  {NULL, NULL}
-};
-
-static void triplet_TripletCriterion_init(lua_State *L)
-{
-  luaT_pushmetatable(L, "torch.CudaTensor");
-  luaT_registeratname(L, triplet_TripletCriterion__, "nn");
-  lua_pop(L,1);
+  return;
 }
