@@ -87,13 +87,19 @@ __global__ void triplet_loss_semi_kernel(const int n, const int nb_batch, const 
     y[i*3 + POSITIVE] = idx_p;
     y[i*3 + NEGATIVE] = idx_n;
 
-    // loss = max((a - p)^2 - (a - n)^2 + alpha, 0)
-    float sum = 0.0f;
-    for (int j = 0; j < length; j++)
-      sum += powf(x[idx_a*length + j] - x[idx_p*length + j], 2);
-    for (int j = 0; j < length; j++)
-      sum -= powf(x[idx_a*length + j] - x[idx_n*length + j], 2);
-    z[i] = fmaxf(sum + alpha, 0.0f);
+    if (l[idx_a] == l[idx_n]) {
+      // if negative not found, do not penalise
+      z[i] = 0.f;
+    }
+    else {
+      // loss = max((a - p)^2 - (a - n)^2 + alpha, 0)
+      float sum = 0.f;
+      for (int j = 0; j < length; j++)
+        sum += powf(x[idx_a*length + j] - x[idx_p*length + j], 2);
+      for (int j = 0; j < length; j++)
+        sum -= powf(x[idx_a*length + j] - x[idx_n*length + j], 2);
+      z[i] = fmaxf(sum + alpha, 0.f);
+    }
   }
 }
 
