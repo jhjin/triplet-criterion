@@ -11,8 +11,7 @@ if arg[1] == '-c' then
 else
    print('Running on ' .. c.blue 'CPU')
 end
-require 'cunn'
-require 'tripletCriterion'
+require 'triplet'
 
 -- Criterion
 -- [output] forward(input, target)
