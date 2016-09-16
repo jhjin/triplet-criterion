@@ -42,11 +42,13 @@ function TripletCriterion:__init(samples, blocks, norm, margin)
    self.dist = torch.Tensor()
    self.embeddings = torch.Tensor()
    self.loss = torch.Tensor()
+   self.fwd = false
 end
 
 function TripletCriterion:updateOutput(input, target)
    assert(input:dim() == 2, 'input should have 2 dimensions of (batch x embedding)')
    assert(input:size(1) >= self.samples*self.blocks)
+   self.fwd = true
 
    if input:type() == 'torch.CudaTensor' then
       -- kernel call
@@ -169,11 +171,9 @@ function TripletCriterion:updateOutput(input, target)
 end
 
 function TripletCriterion:updateGradInput(input, target)
-   --self:updateOutput(input, target)
+   assert(self.fwd, 'You need to run forward() / updateOutput() before!')
 
    local length = input:size(2)
-   local nb_pairs = self.loss:size(1)
-   self.gradInput:resize(nb_pairs, length)
    if input:type() == 'torch.CudaTensor' then
       -- Kernel call
       C.updateGradInput(
@@ -181,10 +181,11 @@ function TripletCriterion:updateGradInput(input, target)
          input:cdata(),
          self.embeddings:cdata(),
          self.loss:cdata(),
-         self.gradInput
+         self.gradInput:cdata()
       )
-      --input.THNN.TripletCriterion_updateGradInput(self, input, target)
    else
+      local nb_pairs = self.loss:size(1)
+      self.gradInput:resize(nb_pairs, length)
       for i = 1, nb_pairs do
          if self.loss[i] > 0 then
             self.gradInput[i] = (input[self.embeddings[i][3]] - input[self.embeddings[i][2]])*2/nb_pairs

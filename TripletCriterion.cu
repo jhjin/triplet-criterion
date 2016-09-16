@@ -252,7 +252,7 @@ void updateGradInput(
   long nb_pairs = loss->size[0];
   long length   = input->size[1];
 
-  //THCudaTensor_resize2d(state, gradInput, nb_pairs, length);
+  THCudaTensor_resize2d(state, gradInput, nb_pairs, length);
 
   // queue kernel
   long num_threads = nb_pairs*length;
