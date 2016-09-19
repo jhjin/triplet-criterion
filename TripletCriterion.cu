@@ -10,8 +10,7 @@ __global__ void triplet_dist_kernel(const int n, const float norm,
                                     const int nb_batch, const int length,
                                     float* x, float* y) {
 
-  // Unnecessary for loop...
-  // This is EXACTLY equivalent to `if (i < n)` statement
+  // This is equivalent to `if (i < n)` statement, for reasonable `n`
   for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < n; i += blockDim.x*gridDim.x) {
 
     // Equivalent C for loop follows
