@@ -1,3 +1,31 @@
+-- Look for shared object
+local libpath = package.searchpath('libtriplet', package.cpath)
+if not libpath then return end
+
+local ffi = require 'ffi'
+local C = ffi.load(libpath)
+ffi.cdef[[
+void updateOutput(
+  THCState* state,
+  THCudaTensor* input,
+  THCudaTensor* label,
+  float norm,
+  float alpha,
+  int samples,
+  int nb_blocks,
+  THCudaTensor* dist,
+  THCudaTensor* emb,
+  THCudaTensor* loss
+);
+void updateGradInput(
+  THCState* state,
+  THCudaTensor* input,
+  THCudaTensor* emb,
+  THCudaTensor* loss,
+  THCudaTensor* gradInput
+);
+]]
+
 local TripletCriterion, parent = torch.class('nn.TripletCriterion', 'nn.Criterion')
 
 function TripletCriterion:__init(samples, blocks, norm, margin)
@@ -14,19 +42,31 @@ function TripletCriterion:__init(samples, blocks, norm, margin)
    self.dist = torch.Tensor()
    self.embeddings = torch.Tensor()
    self.loss = torch.Tensor()
+   self.fwd = false
 end
 
 function TripletCriterion:updateOutput(input, target)
    assert(input:dim() == 2, 'input should have 2 dimensions of (batch x embedding)')
    assert(input:size(1) >= self.samples*self.blocks)
+   self.fwd = true
 
    if input:type() == 'torch.CudaTensor' then
       -- kernel call
-      input.nn.TripletCriterion_updateOutput(self, input, target)
+      C.updateOutput(
+         cutorch.getState(),
+         input:cdata(),
+         target:cdata(),
+         self.norm,
+         self.alpha,
+         self.samples,
+         self.blocks,
+         self.dist:cdata(),
+         self.embeddings:cdata(),
+         self.loss:cdata()
+      )
    else
       local nb_batch = input:size(1)
       local length = input:size(2)
-      local nb_blocks = math.floor(nb_batch/self.samples)
 
       -- calculate distance matrix
       self.dist:resize(nb_batch, nb_batch)
@@ -72,17 +112,17 @@ function TripletCriterion:updateOutput(input, target)
       -- (ii) all anchor-positive pairs
       elseif self.samples > 1 then
          -- calculate nb of all pairs
-         self.embeddings:resize(nb_batch*(self.samples-1), 3):zero()
+         self.embeddings:resize(nb_batch*(self.samples-1), 3):fill(1)
 
          -- repeat batch (samples-1) times
          for i = 0, self.samples-2 do
-            for j = 0, nb_blocks-1 do
+            for j = 0, self.blocks-1 do
                for k = 0, self.samples-1 do
 
                   -- pick an element in distance matrix
                   local row = j*self.samples + k + 1
                   local col = j*self.samples + i + 1
-                  col = ((row > col) and col) or (col + 1)
+                  col = col < row and col or col + 1
 
                   -- find positive embedding
                   local ipos = col
@@ -92,9 +132,9 @@ function TripletCriterion:updateOutput(input, target)
                   local ineg = row
                   local vneg = math.huge
                   for l = self.samples*self.blocks+1, nb_batch do
-                     if (target[l] ~= target[row]) and
-                        (vpos < self.dist[row][l]) and
-                        (vneg > self.dist[row][l]) then
+                     if target[l] ~= target[row] and
+                        self.dist[row][l] > vpos and
+                        self.dist[row][l] < vneg then
                         ineg = l
                         vneg = self.dist[row][l]
                      end
@@ -131,13 +171,20 @@ function TripletCriterion:updateOutput(input, target)
 end
 
 function TripletCriterion:updateGradInput(input, target)
-   self:updateOutput(input, target)
+   assert(self.fwd, 'You need to run forward() / updateOutput() before!')
 
+   local length = input:size(2)
    if input:type() == 'torch.CudaTensor' then
-      input.nn.TripletCriterion_updateGradInput(self, input, target)
+      -- Kernel call
+      C.updateGradInput(
+         cutorch.getState(),
+         input:cdata(),
+         self.embeddings:cdata(),
+         self.loss:cdata(),
+         self.gradInput:cdata()
+      )
    else
       local nb_pairs = self.loss:size(1)
-      local length = input:size(2)
       self.gradInput:resize(nb_pairs, length)
       for i = 1, nb_pairs do
          if self.loss[i] > 0 then
@@ -147,6 +194,10 @@ function TripletCriterion:updateGradInput(input, target)
          end
       end
    end
+
+   local nb_backwards = math.max(1, self.samples-1)
+   local nb_batch = input:size(1)
+   self.gradInput = self.gradInput:view(nb_backwards, nb_batch, length):sum(1):squeeze()
 
    return self.gradInput
 end

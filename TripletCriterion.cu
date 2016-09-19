@@ -1,4 +1,6 @@
 #include "common.h"
+#include <stdio.h>
+//#include "THCUNN.h"
 
 #define ANCHOR 0
 #define POSITIVE 1
@@ -7,14 +9,25 @@
 __global__ void triplet_dist_kernel(const int n, const float norm,
                                     const int nb_batch, const int length,
                                     float* x, float* y) {
+
+  // This is equivalent to `if (i < n)` statement, for reasonable `n`
   for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < n; i += blockDim.x*gridDim.x) {
+
+    // Equivalent C for loop follows
+    // for (int i = 0, i < nb_batch^2, i++)
+
+    // (y, x) coordinate in dist / y
     int row = i / nb_batch;
     int col = i % nb_batch;
 
+    // Pointers to two rows of input / x
     float *xrow = x + row*length;
     float *xcol = x + col*length;
 
+    // Initialise scalar product summation
     float sum = 0.0f;
+
+    // Compute sum[(component difference) ^ norm]
     for (int j = 0; j < length; j++) {
       if (norm == 1.0f) {
         sum += fabsf(xrow[j] - xcol[j]);
@@ -22,6 +35,8 @@ __global__ void triplet_dist_kernel(const int n, const float norm,
         sum += powf(xrow[j] - xcol[j], norm);
       }
     }
+
+    // Compute norm-root of the sum
     if (norm == 1.0f) {
       y[row*nb_batch + col] = sum;
     } else {
@@ -35,24 +50,32 @@ __global__ void triplet_loss_semi_kernel(const int n, const int nb_batch, const 
                                          const float* l, float* y, float* z) {
   for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < n; i += blockDim.x*gridDim.x) {
 
-    // find anchor embedding
+    // Equivalent C for loop follows
+    // for (int i = 0, i < nb_batch, i++)
+
+    // Index of anchor embedding
     int idx_a = i;
 
-    // find positive embedding
+    // Find positive embedding
+    // Start with itself: positive -> anchor
     int idx_p = i;
     float val_p = 0.0f;
+    // Look for worse (farther) positive
     for (int j = 0; j < nb_batch; j++) {
-      if ((l[j] == l[i]) & (val_p < d[i*nb_batch + j])) {
+      // The i-th row of `d` contains all the distances between the anchor
+      // (i-th embedding) and all other j embeddings, j = 0 -> nb_batch - 1
+      if ((l[j] == l[i]) && (val_p < d[i*nb_batch + j])) {
         idx_p = j;
         val_p = d[i*nb_batch + j];
       }
     }
 
-    // find negative embedding
+    // Find negative embedding
     int idx_n = i;
     float val_n = FLT_MAX;
+    // Look for the worse (closest) negative
     for (int j = 0; j < nb_batch; j++) {
-      if ((l[j] != l[i]) & (val_p < d[i*nb_batch + j]) & (val_n > d[i*nb_batch + j])) {
+      if ((l[j] != l[i]) && (val_p < d[i*nb_batch + j]) && (val_n > d[i*nb_batch + j])) {
         idx_n = j;
         val_n = d[i*nb_batch + j];
       }
@@ -63,14 +86,19 @@ __global__ void triplet_loss_semi_kernel(const int n, const int nb_batch, const 
     y[i*3 + POSITIVE] = idx_p;
     y[i*3 + NEGATIVE] = idx_n;
 
-    // loss = max((a - p)^2 - (a - n)^2 + alpha, 0)
-    float sum = 0.0f;
-    for (int j = 0; j < length; j++)
-      sum += powf(x[idx_a*length + j] - x[idx_p*length + j], 2);
-    for (int j = 0; j < length; j++)
-      sum -= powf(x[idx_a*length + j] - x[idx_n*length + j], 2);
-
-    z[i] = fmaxf(sum + alpha, 0.0f);
+    if (l[idx_a] == l[idx_n]) {
+      // if negative not found, do not penalise
+      z[i] = 0.f;
+    }
+    else {
+      // loss = max((a - p)^2 - (a - n)^2 + alpha, 0)
+      float sum = 0.f;
+      for (int j = 0; j < length; j++)
+        sum += powf(x[idx_a*length + j] - x[idx_p*length + j], 2);
+      for (int j = 0; j < length; j++)
+        sum -= powf(x[idx_a*length + j] - x[idx_n*length + j], 2);
+      z[i] = fmaxf(sum + alpha, 0.f);
+    }
   }
 }
 
@@ -79,6 +107,11 @@ __global__ void triplet_loss_semi_allpairs_kernel(const int n, const int nb_batc
                                                   const float alpha, const float* x, const float* d,
                                                   const float* l, float* y, float* z) {
   for (int i = blockIdx.x*blockDim.x+threadIdx.x; i < n; i += blockDim.x*gridDim.x) {
+
+    // Equivalent C for loop follows
+    // for (int i = 0, i < nb_blocks*samples*(samples-1), i++)
+
+
     // pick each element from positive diagonal block in distance matrix
     int row = i % (nb_blocks*samples);
     int col = i / (nb_blocks*samples) + (row / samples)*samples;
@@ -108,28 +141,35 @@ __global__ void triplet_loss_semi_allpairs_kernel(const int n, const int nb_batc
     y[dst*3 + POSITIVE] = idx_p;
     y[dst*3 + NEGATIVE] = idx_n;
 
-    // loss = max((a - p)^2 - (a - n)^2 + alpha, 0)
-    float sum = 0.0f;
-    for (int j = 0; j < length; j++)
-      sum += powf(x[idx_a*length + j] - x[idx_p*length + j], 2);
-    for (int j = 0; j < length; j++)
-      sum -= powf(x[idx_a*length + j] - x[idx_n*length + j], 2);
-    z[dst] = fmaxf(sum + alpha, 0.0f);
+    if (l[idx_a] == l[idx_n]) {
+      // if negative not found, do not penalise
+      z[dst] = 0.f;
+    }
+    else {
+      // loss = max((a - p)^2 - (a - n)^2 + alpha, 0)
+      float sum = 0.f;
+      for (int j = 0; j < length; j++)
+        sum += powf(x[idx_a*length + j] - x[idx_p*length + j], 2);
+      for (int j = 0; j < length; j++)
+        sum -= powf(x[idx_a*length + j] - x[idx_n*length + j], 2);
+      z[dst] = fmaxf(sum + alpha, 0.f);
+    }
   }
 }
 
-static int triplet_TripletCriterion_updateOutput(lua_State *L) {
-  THCState *state = getCutorchState(L);
-
-  THCudaTensor *input = (THCudaTensor*)luaT_checkudata(L, 2, "torch.CudaTensor");
-  THCudaTensor *label = (THCudaTensor*)luaT_checkudata(L, 3, "torch.CudaTensor");
-  float norm = luaT_getfieldchecknumber(L, 1, "norm");
-  float alpha = luaT_getfieldchecknumber(L, 1, "alpha");
-  int samples = luaT_getfieldchecknumber(L, 1, "samples");
-  int nb_blocks = luaT_getfieldchecknumber(L, 1, "blocks");
-  THCudaTensor *dist = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "dist", "torch.CudaTensor");
-  THCudaTensor *emb = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "embeddings", "torch.CudaTensor");
-  THCudaTensor *loss = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "loss", "torch.CudaTensor");
+extern "C"
+void updateOutput(
+  THCState* state,
+  THCudaTensor* input,
+  THCudaTensor* label,
+  float norm,
+  float alpha,
+  int samples,
+  int nb_blocks,
+  THCudaTensor* dist,
+  THCudaTensor* emb,
+  THCudaTensor* loss
+) {
 
   long nb_batch = input->size[0];
   long length   = input->size[1];
@@ -169,7 +209,7 @@ static int triplet_TripletCriterion_updateOutput(lua_State *L) {
       THCudaTensor_data(state, emb),
       THCudaTensor_data(state, loss)
     );
-  } else {
+  } else { // samples == 1
     num_threads = nb_batch;
     triplet_loss_semi_kernel <<<GET_BLOCKS(num_threads), CUDA_NUM_THREADS, 0, THCState_getCurrentStream(state)>>> (
       num_threads, nb_batch, length, alpha,
@@ -183,7 +223,7 @@ static int triplet_TripletCriterion_updateOutput(lua_State *L) {
 
   // close
   THCudaTensor_free(state, input);
-  return 1;
+  return;
 }
 
 __global__ void triplet_prop_kernel(const int n, const int nb_pairs, const int length,
@@ -200,13 +240,14 @@ __global__ void triplet_prop_kernel(const int n, const int nb_pairs, const int l
   }
 }
 
-static int triplet_TripletCriterion_updateGradInput(lua_State *L) {
-  THCState *state = getCutorchState(L);
-
-  THCudaTensor *input = (THCudaTensor*)luaT_checkudata(L, 2, "torch.CudaTensor");
-  THCudaTensor *emb = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "embeddings", "torch.CudaTensor");
-  THCudaTensor *loss = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "loss", "torch.CudaTensor");
-  THCudaTensor *gradInput = (THCudaTensor*)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
+extern "C"
+void updateGradInput(
+  THCState* state,
+  THCudaTensor* input,
+  THCudaTensor* emb,
+  THCudaTensor* loss,
+  THCudaTensor* gradInput
+) {
   long nb_pairs = loss->size[0];
   long length   = input->size[1];
 
@@ -222,18 +263,5 @@ static int triplet_TripletCriterion_updateGradInput(lua_State *L) {
     THCudaTensor_data(state, gradInput)
   );
 
-  return 1;
-}
-
-static const struct luaL_Reg triplet_TripletCriterion__ [] = {
-  {"TripletCriterion_updateOutput", triplet_TripletCriterion_updateOutput},
-  {"TripletCriterion_updateGradInput", triplet_TripletCriterion_updateGradInput},
-  {NULL, NULL}
-};
-
-static void triplet_TripletCriterion_init(lua_State *L)
-{
-  luaT_pushmetatable(L, "torch.CudaTensor");
-  luaT_registeratname(L, triplet_TripletCriterion__, "nn");
-  lua_pop(L,1);
+  return;
 }
